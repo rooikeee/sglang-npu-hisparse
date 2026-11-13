@@ -51,7 +51,6 @@ def _hisparse_allowed_backends(kv_cache_dtype: str) -> set[str]:
 def validate_hisparse_dsa_backend(
     server_args: ServerArgs, attr: str, label: str
 ) -> None:
-
     # Invoked after the DSA kv-cache-dtype / split-backend declarations:
     # read the resolving state through the view.
     view = resolved_view(server_args)
@@ -83,7 +82,6 @@ def validate_hisparse_dsa_backend(
 
 
 def validate_hisparse_kv_cache_dtype(server_args: ServerArgs) -> None:
-
     kv_cache_dtype = resolved_view(server_args).kv_cache_dtype
     if kv_cache_dtype in HISPARSE_KV_CACHE_DTYPES:
         return
@@ -98,7 +96,6 @@ def validate_hisparse_kv_cache_dtype(server_args: ServerArgs) -> None:
 
 
 def validate_hisparse_feature_combos(server_args: ServerArgs) -> None:
-
     cfg = resolving_view(server_args)
     # A mixed batch cannot merge the HiSparse decode batch.
     if cfg.enable_mixed_chunk:
@@ -137,6 +134,13 @@ def validate_hisparse(server_args: ServerArgs) -> None:
         "Hierarchical sparse attention currently requires --disable-radix-cache."
     )
     validate_hisparse_feature_combos(server_args)
+    if get_platform().is_npu:
+        from sglang.srt.hardware_backend.npu.hisparse.config import (
+            validate_npu_hisparse,
+        )
+
+        validate_npu_hisparse(resolved_view(server_args), hf_config)
+        return
 
     algorithm = cfg.speculative_algorithm
     if algorithm is not None and algorithm.upper() != "NONE":

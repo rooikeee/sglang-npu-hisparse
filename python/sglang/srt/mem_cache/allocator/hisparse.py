@@ -32,6 +32,7 @@ class HiSparseTokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
         kvcache: HiSparseDSATokenToKVPool | MiniMaxSparseKVPool,
         need_sort: bool,
         host_to_device_ratio: int = 2,
+        paged_allocator_cls: type | None = None,
     ):
         self._kvcache = kvcache
         self._size_full = size * host_to_device_ratio
@@ -45,7 +46,9 @@ class HiSparseTokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
         self._spec_device_buffer_size = 0
 
         paged_allocator_cls = (
-            current_platform.get_paged_allocator_cls() or PagedTokenToKVPoolAllocator
+            paged_allocator_cls
+            or current_platform.get_paged_allocator_cls()
+            or PagedTokenToKVPoolAllocator
         )
         self.logical_attn_allocator = paged_allocator_cls(
             self._size_full,

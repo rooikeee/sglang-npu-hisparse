@@ -407,9 +407,9 @@ class HiSparseSpecSwapManager:
                 device_locs,
                 io_backend="kernel",
             )
-            if host_locs.is_cuda:
+            if host_locs.is_cuda or host_locs.device.type == "npu":
                 host_locs.record_stream(coordinator.decode_backup_stream)
-            if device_locs.is_cuda:
+            if device_locs.is_cuda or device_locs.device.type == "npu":
                 device_locs.record_stream(coordinator.decode_backup_stream)
             coordinator._backup_done_event.record()
         coordinator._has_pending_backup = True
@@ -624,22 +624,7 @@ class HiSparseCoordinator:
                 )
                 self.item_size_bytes = self.mem_pool_device.bytes_per_token_k
             else:
-                self.mem_pool_host = MLATokenToKVPoolHost(
-                    buffer_info=self.mem_pool_device.get_device_pool_infos()[
-                        0
-                    ].buffer_info,
-                    device_capacity_tokens=self.mem_pool_device.size
-                    if self.mem_pool_device.host_capacity_tokens is None
-                    else self.mem_pool_device.host_capacity_tokens,
-                    start_layer=self.mem_pool_device.start_layer,
-                    end_layer=self.mem_pool_device.end_layer,
-                    target_layer_num=self.mem_pool_device.layer_num,
-                    host_to_device_ratio=host_to_device_ratio,
-                    host_size=0,
-                    page_size=self.mem_pool_device.page_size,
-                    layout="layer_first",
-                    override_kv_cache_dim=self.mem_pool_device.kv_cache_dim,
-                )
+                self.mem_pool_host = self._create_mla_host_pool(host_to_device_ratio)
                 self.item_size_bytes = self.mem_pool_host.token_stride_size
         self.page_size = self.mem_pool_device.page_size
 
@@ -746,6 +731,25 @@ class HiSparseCoordinator:
             shared_index_layers=shared_index_layers,
             layer_num=layer_num,
             max_num_req_slots=max_num_req_slots,
+        )
+
+    def _create_mla_host_pool(self, host_to_device_ratio):
+        """Backend seam: preserve shared lifecycle while adapting storage/IO."""
+        return MLATokenToKVPoolHost(
+            buffer_info=self.mem_pool_device.get_device_pool_infos()[0].buffer_info,
+            device_capacity_tokens=(
+                self.mem_pool_device.size
+                if self.mem_pool_device.host_capacity_tokens is None
+                else self.mem_pool_device.host_capacity_tokens
+            ),
+            start_layer=self.mem_pool_device.start_layer,
+            end_layer=self.mem_pool_device.end_layer,
+            target_layer_num=self.mem_pool_device.layer_num,
+            host_to_device_ratio=host_to_device_ratio,
+            host_size=0,
+            page_size=self.mem_pool_device.page_size,
+            layout="layer_first",
+            override_kv_cache_dim=self.mem_pool_device.kv_cache_dim,
         )
 
     def _init_shared_index_prefetch(
@@ -880,9 +884,9 @@ class HiSparseCoordinator:
                 io_backend="kernel",
             )
             finish_event.record()
-            if host_indices.is_cuda:
+            if host_indices.is_cuda or host_indices.device.type == "npu":
                 host_indices.record_stream(self.write_staging_stream)
-            if device_indices.is_cuda:
+            if device_indices.is_cuda or device_indices.device.type == "npu":
                 device_indices.record_stream(self.write_staging_stream)
 
         move([HiSparseAct(start_event, finish_event, req)], self.ack_staging_queue)
@@ -1266,13 +1270,16 @@ class HiSparseCoordinator:
                     io_backend="kernel",
                 )
             self._backup_done_event.record()
-            if host_locs.is_cuda:
+            if host_locs.is_cuda or host_locs.device.type == "npu":
                 host_locs.record_stream(self.decode_backup_stream)
-            if backup_req_indices.is_cuda:
+            if backup_req_indices.is_cuda or backup_req_indices.device.type == "npu":
                 backup_req_indices.record_stream(self.decode_backup_stream)
-            if actual_compressed_pos.is_cuda:
+            if (
+                actual_compressed_pos.is_cuda
+                or actual_compressed_pos.device.type == "npu"
+            ):
                 actual_compressed_pos.record_stream(self.decode_backup_stream)
-            if device_locs.is_cuda:
+            if device_locs.is_cuda or device_locs.device.type == "npu":
                 device_locs.record_stream(self.decode_backup_stream)
         self._has_pending_backup = True
 

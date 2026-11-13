@@ -2240,7 +2240,25 @@ class KVCacheConfigurator:
         use_dsa_fp8_kv_cache_storage = (
             self.kv_cache_dtype == torch.float8_e4m3fn and is_arch35
         )
-        token_to_kv_pool = NPUMLATokenToKVPool(
+        pool_cls = NPUMLATokenToKVPool
+        hisparse_kwargs = {}
+        if get_memory().enable_hisparse:
+            if not is_dsa_model or self.is_draft_worker or dcp_size != 1:
+                raise ValueError(
+                    "NPU HiSparse requires a non-draft DSA pool without DCP."
+                )
+            from sglang.srt.hardware_backend.npu.hisparse.memory_pool import (
+                NPUHiSparseTokenToKVPool,
+            )
+            from sglang.srt.mem_cache.sparsity import parse_hisparse_config
+
+            ratio = parse_hisparse_config().host_to_device_ratio
+            pool_cls = NPUHiSparseTokenToKVPool
+            hisparse_kwargs["host_to_device_ratio"] = ratio
+            # Index-K covers the complete logical history, independently from
+            # the smaller physical attention pool controlled by HiSparse.
+            index_size = max_total_num_tokens * ratio
+        token_to_kv_pool = pool_cls(
             max_total_num_tokens,
             page_size=get_schedule().page_size,
             dtype=self.kv_cache_dtype,
@@ -2265,6 +2283,7 @@ class KVCacheConfigurator:
             end_layer=self.layer_info.end_layer,
             use_combined_kv_buffer=self.use_combined_kv_buffer,
             modelslim_cache_layout=self.modelslim_cache_layout,
+            **hisparse_kwargs,
         )
         return token_to_kv_pool
 
@@ -2842,7 +2861,30 @@ class KVCacheConfigurator:
         # Initialize token_to_kv_pool_allocator
         need_sort = get_disagg().disaggregation_mode in ("decode", "prefill")
         if token_to_kv_pool_allocator is None:
-            if _is_npu and (
+            if _is_npu and get_memory().enable_hisparse:
+                from sglang.srt.hardware_backend.npu.allocator_npu import (
+                    NPUPagedTokenToKVPoolAllocator,
+                )
+                from sglang.srt.hardware_backend.npu.hisparse.memory_pool import (
+                    NPUHiSparseTokenToKVPool,
+                )
+                from sglang.srt.mem_cache.sparsity import parse_hisparse_config
+
+                if not isinstance(token_to_kv_pool, NPUHiSparseTokenToKVPool):
+                    raise ValueError(
+                        "NPU HiSparse requires the dedicated DSA paged pool."
+                    )
+                token_to_kv_pool_allocator = HiSparseTokenToKVPoolAllocator(
+                    sizes.max_total_num_tokens,
+                    page_size=get_schedule().page_size,
+                    dtype=self.kv_cache_dtype,
+                    device=self.device,
+                    kvcache=token_to_kv_pool,
+                    need_sort=need_sort,
+                    host_to_device_ratio=parse_hisparse_config().host_to_device_ratio,
+                    paged_allocator_cls=NPUPagedTokenToKVPoolAllocator,
+                )
+            elif _is_npu and (
                 get_exec().kernel.attention_backend == "ascend"
                 or is_compressed_kv_model
                 or self.hybrid_gdn_config is not None

@@ -1969,6 +1969,30 @@ class AscendAttnBackend(AttentionBackend):
         k_rope: Optional[torch.Tensor] = None,
         topk_indices: torch.Tensor = None,
     ):
+        # Use native HiSparse ownership and page tables while preserving the
+        # NPU indexer's original logical metadata. Offload's compact-gather
+        # backend is independent and must not be enabled at the same time.
+        from sglang.srt.hardware_backend.npu.hisparse.memory_pool import (
+            NPUHiSparseTokenToKVPool,
+        )
+
+        if isinstance(self.token_to_kv_pool, NPUHiSparseTokenToKVPool):
+            from sglang.srt.hardware_backend.npu.hisparse.attention import (
+                forward_hisparse,
+            )
+
+            return forward_hisparse(
+                self,
+                q,
+                k,
+                v,
+                layer,
+                forward_batch,
+                save_kv_cache,
+                q_rope,
+                k_rope,
+                self._pad_topk_indices(topk_indices, q.shape[0]),
+            )
 
         is_prefill = (
             forward_batch.forward_mode.is_extend()
